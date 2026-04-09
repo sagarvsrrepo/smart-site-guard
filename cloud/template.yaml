@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SmartSite Guard AWS IoT + DynamoDB deployment template for AWS Learner Lab.
+Parameters:
+  TableNamePrefix:
+    Type: String
+    Default: SmartSiteGuardEvents
+    Description: Prefix for the DynamoDB table name.
+Resources:
+  SmartSiteGuardTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${TableNamePrefix}-${AWS::StackName}"
+      AttributeDefinitions:
+        - AttributeName: event_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: event_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  DynamoDBTableName:
+    Description: 'DynamoDB table name for SmartSite events'
+    Value: !Ref SmartSiteGuardTable
