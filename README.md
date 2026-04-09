@@ -94,5 +94,6 @@ Use the values in the root `.env` file.
 To use the workflow in `.github/workflows/cloud-deploy.yml`, add these repository secrets:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN` (required for temporary learner lab credentials)
 
 The workflow uses the `region` input and defaults to `us-east-1`, so you do not need to store `AWS_REGION` as a secret unless you prefer it.
