@@ -95,5 +95,6 @@ To use the workflow in `.github/workflows/cloud-deploy.yml`, add these repositor
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN` (required for temporary learner lab credentials)
+- `AWS_REGION` (optional; when present, this value overrides the workflow input)
 
-The workflow uses the `region` input and defaults to `us-east-1`, so you do not need to store `AWS_REGION` as a secret unless you prefer it.
+The workflow still provides a `region` input and defaults to `us-east-1`, but if you want the runner to use a learner-lab region from secrets, set `AWS_REGION`.
