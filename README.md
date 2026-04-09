@@ -1,12 +1,14 @@
 # SmartSite Guard Dashboard and Local Simulator/Fog
 
 This repository contains the local dashboard, fog processor, and simulator code.
-It no longer includes AWS deployment CI/CD or deployment configuration.
+It also includes cloud deployment artifacts under `cloud/` and a GitHub Actions workflow for CloudFormation deployment.
 
 This repo contains:
 - `dashboard/` — Flask dashboard application
 - `fog/` — local fog processor code
 - `simulator/` — local simulator code
+- `cloud/` — CloudFormation deployment artifacts and PowerShell deploy script
+- `.github/workflows/cloud-deploy.yml` — GitHub Actions deploy workflow
 - `.env` — local environment values for dashboard and simulator
 - `.env.example` — sample environment configuration
 
@@ -83,7 +85,14 @@ Use the values in the root `.env` file.
 - `PUBLISH_INTERVAL_SECONDS=2`
 
 ## Notes
-- AWS deployment CI/CD is removed from this repository.
+- The `cloud/` folder now contains the CloudFormation template and `cloud/deploy.ps1` deployment script.
+- GitHub Actions deployment is available via `.github/workflows/cloud-deploy.yml`.
 - The fog and simulator code is preserved locally for local execution.
 - The dashboard reads stored events directly from DynamoDB.
-- `cloud/` deployment artifacts are removed from this repo.
+
+## GitHub Actions deploy secrets
+To use the workflow in `.github/workflows/cloud-deploy.yml`, add these repository secrets:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+The workflow uses the `region` input and defaults to `us-east-1`, so you do not need to store `AWS_REGION` as a secret unless you prefer it.
