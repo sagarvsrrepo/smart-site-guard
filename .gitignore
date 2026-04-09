@@ -1,0 +1,18 @@
+# Python cache
+derived data
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv/
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+*.egg-info/
+*.egg
+.DS_Store
+

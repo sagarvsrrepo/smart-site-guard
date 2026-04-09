@@ -4,8 +4,11 @@ from botocore.exceptions import ClientError
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
+from dotenv import load_dotenv
+from pathlib import Path
 import os
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = Flask(__name__, static_folder="static", template_folder="templates")
 application = app
 
