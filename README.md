@@ -55,7 +55,21 @@ This repo contains:
    ```
 
 5. Open `http://localhost:5000`
+## Launch all local components
 
+A single helper script is available to start the dashboard, fog processor, and simulator together.
+
+- Bash / Git Bash / WSL:
+  ```bash
+  chmod +x run_all.sh
+  ./run_all.sh
+  ```
+- PowerShell:
+  ```powershell
+  .\run_all.ps1
+  ```
+
+The scripts load `.env`, start each process, and write logs to `logs/`.
 ## Required `.env` values
 Use the values in the root `.env` file.
 
