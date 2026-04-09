@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartSite Guard Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>SmartSite Guard</h1>
+      <p>Fog-enabled construction safety monitoring with live sensor insights.</p>
+    </div>
+    <div class="header-actions">
+      <div class="live-badge"><span class="pulse"></span>Live</div>
+      <button class="refresh-btn" onclick="loadDashboard()">Refresh</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="loadingOverlay" class="loading-overlay">
+      <div class="spinner"></div>
+      <p>Loading dashboard...</p>
+    </div>
+    <section class="toolbar">
+      <div class="toolbar-group">
+        <label>Time Range</label>
+        <div class="chip-group">
+          <button class="chip active" data-minutes="5">Last 5 mins</button>
+          <button class="chip" data-minutes="10">Last 10 mins</button>
+          <button class="chip" data-minutes="60">Last 1 hour</button>
+        </div>
+      </div>
+
+      <div class="toolbar-group">
+        <label>Custom Range</label>
+        <div class="range-controls">
+          <input type="datetime-local" id="startTime" />
+          <input type="datetime-local" id="endTime" />
+          <button id="applyRangeBtn" class="refresh-btn">Apply</button>
+        </div>
+      </div>
+
+      <div class="toolbar-group">
+        <label for="sensorFilter">Sensor</label>
+        <select id="sensorFilter">
+          <option value="ALL">All sensors</option>
+          <option value="temperature">Temperature</option>
+          <option value="gas">Gas</option>
+          <option value="noise">Noise</option>
+          <option value="vibration">Vibration</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <label for="severityFilter">Severity</label>
+        <select id="severityFilter">
+          <option value="ALL">All severities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="HIGH">High</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LOW">Low</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group meta">
+        <label>Last updated</label>
+        <div id="lastUpdated">--</div>
+      </div>
+    </section>
+
+    <section class="status-banner" id="statusBanner">
+      <div>
+        <p class="label">Current Site Status</p>
+        <h2 id="siteStatusText">Loading...</h2>
+      </div>
+      <div class="status-dot" id="statusDot"></div>
+    </section>
+
+    <section class="stats-grid">
+      <div class="stat-card"><p>Total Events</p><h3 id="total_events">0</h3></div>
+      <div class="stat-card critical"><p>Critical</p><h3 id="critical">0</h3></div>
+      <div class="stat-card high"><p>High</p><h3 id="high">0</h3></div>
+      <div class="stat-card medium"><p>Medium</p><h3 id="medium">0</h3></div>
+      <div class="stat-card low"><p>Low</p><h3 id="low">0</h3></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Sensor Overview</h2>
+        <p>Latest reading from each sensor</p>
+      </div>
+      <div class="sensor-grid" id="sensorGrid"></div>
+    </section>
+
+    <section class="chart-grid">
+      <div class="panel">
+        <div class="panel-head"><h2>Temperature</h2><p>X: Time | Y: °C</p></div>
+        <div class="chart-wrap"><canvas id="temperatureChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Gas</h2><p>X: Time | Y: ppm</p></div>
+        <div class="chart-wrap"><canvas id="gasChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Noise</h2><p>X: Time | Y: dB</p></div>
+        <div class="chart-wrap"><canvas id="noiseChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Vibration</h2><p>X: Time | Y: mm/s</p></div>
+        <div class="chart-wrap"><canvas id="vibrationChart"></canvas></div>
+      </div>
+    </section>
+
+    <section class="two-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent Alerts</h2>
+          <p>Filtered safety incidents</p>
+        </div>
+        <div class="alert-list" id="alertList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent Logs</h2>
+          <p>Latest processed records</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Sensor</th>
+                <th>Value</th>
+                <th>Severity</th>
+              </tr>
+            </thead>
+            <tbody id="logsTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const chartMap = {};
+    const chartColors = {
+      temperature: "#ef4444",
+      gas: "#8b5cf6",
+      noise: "#f59e0b",
+      vibration: "#14b8a6"
+    };
+
+    let selectedMinutes = 5;
+
+    function formatStatus(status) {
+      const banner = document.getElementById("statusBanner");
+      const dot = document.getElementById("statusDot");
+      const text = document.getElementById("siteStatusText");
+      banner.className = "status-banner " + status.toLowerCase();
+      dot.className = "status-dot " + status.toLowerCase();
+      text.textContent = status;
+    }
+
+    function renderSummary(summary) {
+      document.getElementById("total_events").textContent = summary.total_events;
+      document.getElementById("critical").textContent = summary.critical;
+      document.getElementById("high").textContent = summary.high;
+      document.getElementById("medium").textContent = summary.medium;
+      document.getElementById("low").textContent = summary.low;
+    }
+
+    function renderSensorCards(sensorCards) {
+      const grid = document.getElementById("sensorGrid");
+      grid.innerHTML = "";
+      const icons = {
+        temperature: "fas fa-thermometer-half",
+        gas: "fas fa-wind",
+        noise: "fas fa-volume-up",
+        vibration: "fas fa-wave-square"
+      };
+      sensorCards.forEach(sensor => {
+        const card = document.createElement("div");
+        card.className = `sensor-card ${sensor.severity.toLowerCase()}`;
+        const icon = icons[sensor.sensor_type] || "fas fa-sensor";
+        const formattedTime = new Date(sensor.time).toLocaleString();
+        card.innerHTML = `
+          <div class="sensor-top">
+            <h3><i class="${icon}"></i> ${sensor.sensor_type}</h3>
+            <span class="pill ${sensor.severity.toLowerCase()}">${sensor.severity}</span>
+          </div>
+          <div class="sensor-value">${sensor.value} <small>${sensor.unit}</small></div>
+          <p class="sensor-message">${sensor.message}</p>
+          <p class="sensor-time">${formattedTime}</p>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function renderLineChart(sensorKey, chartData) {
+      const el = document.getElementById(`${sensorKey}Chart`);
+      if (!el) return;
+      const ctx = el.getContext("2d");
+
+      if (chartMap[sensorKey]) {
+        // Update existing chart data
+        chartMap[sensorKey].data.labels = chartData.labels;
+        chartMap[sensorKey].data.datasets[0].data = chartData.values;
+        chartMap[sensorKey].update('none'); // 'none' prevents animation flicker
+      } else {
+        // Create new chart
+        chartMap[sensorKey] = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: chartData.labels,
+            datasets: [{
+              label: `${chartData.label} (${chartData.unit})`,
+              data: chartData.values,
+              borderColor: chartColors[sensorKey],
+              backgroundColor: chartColors[sensorKey] + "22",
+              fill: true,
+              tension: 0.35,
+              pointRadius: 3
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 0 }, // Disable animations to prevent flicker
+            plugins: {
+              legend: { display: true }
+            },
+            scales: {
+              x: {
+                title: {
+                  display: true,
+                  text: "Time"
+                }
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: chartData.unit
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
+    function renderAlerts(alerts) {
+      const list = document.getElementById("alertList");
+      list.innerHTML = "";
+
+      if (!alerts.length) {
+        list.innerHTML = `<div class="empty-state"><i class="fas fa-info-circle"></i> No alerts found for the selected filters.</div>`;
+        return;
+      }
+
+      alerts.forEach(alert => {
+        const item = document.createElement("div");
+        item.className = `alert-item ${alert.severity.toLowerCase()}`;
+        const formattedTime = new Date(alert.fog_processed_at).toLocaleString();
+        item.innerHTML = `
+          <div class="alert-head">
+            <div>
+              <h3>${alert.sensor_type} <span>${alert.sensor_id}</span></h3>
+              <p>${alert.message}</p>
+            </div>
+            <span class="pill ${alert.severity.toLowerCase()}">${alert.severity}</span>
+          </div>
+          <div class="alert-meta">
+            <span><i class="fas fa-tachometer-alt"></i> Value: ${alert.value} ${alert.unit}</span>
+            <span><i class="fas fa-map-marker-alt"></i> Zone: ${alert.zone_id}</span>
+            <span><i class="fas fa-clock"></i> ${formattedTime}</span>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function renderLogs(logs) {
+      const tbody = document.getElementById("logsTable");
+      tbody.innerHTML = "";
+
+      if (!logs.length) {
+        tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><i class="fas fa-list"></i> No logs found for the selected filters.</div></td></tr>`;
+        return;
+      }
+
+      logs.forEach(log => {
+        const row = document.createElement("tr");
+        const formattedTime = new Date(log.fog_processed_at).toLocaleString();
+        row.innerHTML = `
+          <td>${formattedTime}</td>
+          <td>${log.sensor_type}</td>
+          <td>${log.value} ${log.unit}</td>
+          <td><span class="pill ${log.severity.toLowerCase()}">${log.severity}</span></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    async function loadDashboard() {
+      const overlay = document.getElementById("loadingOverlay");
+      overlay.style.display = "flex";
+
+      const sensor = document.getElementById("sensorFilter").value;
+      const severity = document.getElementById("severityFilter").value;
+      const startInput = document.getElementById("startTime").value;
+      const endInput = document.getElementById("endTime").value;
+
+      try {
+        const params = new URLSearchParams({ sensor, severity });
+        if (startInput) {
+          params.set("start_time", new Date(startInput).toISOString());
+        }
+        if (endInput) {
+          params.set("end_time", new Date(endInput).toISOString());
+        }
+        if (!startInput && !endInput) {
+          params.set("minutes", selectedMinutes || 60);
+        }
+
+        const url = `/api/dashboard?${params.toString()}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        renderSummary(data.summary);
+        formatStatus(data.site_status);
+        renderSensorCards(data.sensor_cards);
+        renderAlerts(data.recent_alerts);
+        renderLogs(data.recent_logs);
+
+        renderLineChart("temperature", data.charts.temperature);
+        renderLineChart("gas", data.charts.gas);
+        renderLineChart("noise", data.charts.noise);
+        renderLineChart("vibration", data.charts.vibration);
+
+        document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
+      } catch (error) {
+        console.error("Error loading dashboard:", error);
+      } finally {
+        overlay.style.display = "none";
+      }
+    }
+
+    function clearCustomRange() {
+      document.getElementById("startTime").value = "";
+      document.getElementById("endTime").value = "";
+    }
+
+    document.querySelectorAll(".chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+        btn.classList.add("active");
+        selectedMinutes = btn.dataset.minutes;
+        clearCustomRange();
+        loadDashboard();
+      });
+    });
+
+    document.getElementById("sensorFilter").addEventListener("change", loadDashboard);
+    document.getElementById("severityFilter").addEventListener("change", loadDashboard);
+    document.getElementById("applyRangeBtn").addEventListener("click", () => {
+      selectedMinutes = null;
+      document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      loadDashboard();
+    });
+
+    loadDashboard();
+    setInterval(loadDashboard, 10000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+name: EC2 Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-ec2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y openssh-client rsync
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Copy repository to EC2
+        run: |
+          mkdir -p /tmp/smartsite-guard
+          rsync -av --delete --exclude '.git' ./ /tmp/smartsite-guard
+          rsync -av --delete /tmp/smartsite-guard/ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/smartsite-guard
+        env:
+          RSYNC_RSH: 'ssh -o StrictHostKeyChecking=no -p ${EC2_SSH_PORT:-22}'
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+
+      - name: Run EC2 deployment script
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${EC2_SSH_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            'cd /home/${{ secrets.EC2_USER }}/smartsite-guard && chmod +x ./deploy_ec2.sh && AWS_DEFAULT_REGION="${{ secrets.AWS_REGION }}" DYNAMODB_TABLE="${{ secrets.DYNAMODB_TABLE }}" IOT_ENDPOINT="${{ secrets.IOT_ENDPOINT }}" IOT_TOPIC_RAW="${{ secrets.IOT_TOPIC_RAW }}" IOT_TOPIC_PROCESSED="${{ secrets.IOT_TOPIC_PROCESSED }}" SITE_ID="${{ secrets.SITE_ID }}" ZONE_ID="${{ secrets.ZONE_ID }}" PUBLISH_INTERVAL_SECONDS="${{ secrets.PUBLISH_INTERVAL_SECONDS }}" ./deploy_ec2.sh /home/${{ secrets.EC2_USER }}/smartsite-guard'
+        env:
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
