@@ -84,6 +84,25 @@ Use the values in the root `.env` file.
 - `ZONE_ID=zone-A`
 - `PUBLISH_INTERVAL_SECONDS=2`
 
+## Deployment files and CloudFormation
+The repository includes the following deployment artifacts:
+- `cloud/deploy.ps1` — PowerShell script that deploys the CloudFormation stack from `cloud/template.yaml`.
+- `cloud/template.yaml` — AWS CloudFormation template that defines the resources needed for the solution.
+- `dashboard/Procfile` — startup definition used by hosting platforms that require a process file for launching the Flask app.
+- `.github/workflows/cloud-deploy.yml` — GitHub Actions workflow for manual deployment from the repository.
+
+### How CloudFormation works
+AWS CloudFormation lets you define infrastructure as code in a YAML or JSON template. When the template is deployed, CloudFormation creates, updates, or deletes AWS resources in a single stack, ensuring the infrastructure is provisioned consistently.
+
+### What `deploy.ps1` does
+`deploy.ps1` changes into the `cloud/` directory and runs `aws cloudformation deploy --template-file template.yaml --stack-name <stack> --region <region>`. This command submits the CloudFormation template to AWS and applies the infrastructure changes.
+
+### What `template.yaml` contains
+The template defines the AWS resources needed by the project, such as DynamoDB tables, IAM roles, Lambda functions, or any other cloud resources required for deployment.
+
+### What `Procfile` is for
+The `dashboard/Procfile` tells a platform how to start the Flask dashboard. It is typically used by deployment platforms like Elastic Beanstalk, Heroku, or other PaaS environments that recognize Procfile syntax.
+
 ## Notes
 - The `cloud/` folder now contains the CloudFormation template and `cloud/deploy.ps1` deployment script.
 - GitHub Actions deployment is available via `.github/workflows/cloud-deploy.yml`.

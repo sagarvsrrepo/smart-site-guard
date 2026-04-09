@@ -119,6 +119,13 @@ justifications = [
 for sensor, reason in justifications:
     doc.add_paragraph(f'{sensor}: {reason}')
 
+doc.add_heading('Deployment and CloudFormation', level=2)
+doc.add_paragraph('The project includes cloud deployment artifacts that define infrastructure as code and automate stack deployment.')
+doc.add_paragraph('The `cloud/template.yaml` file is an AWS CloudFormation template. It describes AWS resources and dependencies so the application infrastructure can be created in a repeatable, managed way.')
+doc.add_paragraph('The `cloud/deploy.ps1` script runs the AWS CLI deploy command against the CloudFormation template. It is used to create or update the stack from the repository.')
+doc.add_paragraph('The `dashboard/Procfile` is a process startup definition. Hosting platforms use it to know how to start the Flask dashboard application.')
+doc.add_paragraph('This deployment model separates local runtime behavior from cloud infrastructure provisioning, allowing developers to test locally and deploy reliably when needed.')
+
 doc.add_heading('Local Test Results', level=2)
 doc.add_paragraph('The local runtime validation confirmed that all Python modules compile successfully and required imports are available for dashboard, fog, simulator, and cloud lambda components.')
 
