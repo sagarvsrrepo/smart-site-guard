@@ -1,14 +1,15 @@
 # SmartSite Guard Dashboard and Local Simulator/Fog
 
 This repository contains the local dashboard, fog processor, and simulator code.
-It also includes cloud deployment artifacts under `cloud/` and a GitHub Actions workflow for CloudFormation deployment.
+It also includes cloud deployment artifacts under `cloud/` and GitHub Actions workflows for CloudFormation and Elastic Beanstalk deployment.
 
 This repo contains:
 - `dashboard/` — Flask dashboard application
 - `fog/` — local fog processor code
 - `simulator/` — local simulator code
 - `cloud/` — CloudFormation deployment artifacts and PowerShell deploy script
-- `.github/workflows/cloud-deploy.yml` — GitHub Actions deploy workflow
+- `.github/workflows/cloud-deploy.yml` — GitHub Actions deploy workflow for CloudFormation
+- `.github/workflows/dashboard-ebs-deploy.yml` — GitHub Actions CI/CD workflow for deploying the dashboard to Elastic Beanstalk
 - `.env` — local environment values for dashboard and simulator
 - `.env.example` — sample environment configuration
 
@@ -89,7 +90,8 @@ The repository includes the following deployment artifacts:
 - `cloud/deploy.ps1` — PowerShell script that deploys the CloudFormation stack from `cloud/template.yaml`.
 - `cloud/template.yaml` — AWS CloudFormation template that defines the resources needed for the solution.
 - `dashboard/Procfile` — startup definition used by hosting platforms that require a process file for launching the Flask app.
-- `.github/workflows/cloud-deploy.yml` — GitHub Actions workflow for manual deployment from the repository.
+- `.github/workflows/cloud-deploy.yml` — GitHub Actions workflow for manual CloudFormation deployment from the repository.
+- `.github/workflows/dashboard-ebs-deploy.yml` — GitHub Actions workflow that packages `dashboard/` and deploys it to an existing Elastic Beanstalk environment.
 
 ### How CloudFormation works
 AWS CloudFormation lets you define infrastructure as code in a YAML or JSON template. When the template is deployed, CloudFormation creates, updates, or deletes AWS resources in a single stack, ensuring the infrastructure is provisioned consistently.
@@ -117,3 +119,31 @@ To use the workflow in `.github/workflows/cloud-deploy.yml`, add these repositor
 - `AWS_REGION` (optional; when present, this value overrides the workflow input)
 
 The workflow still provides a `region` input and defaults to `us-east-1`, but if you want the runner to use a learner-lab region from secrets, set `AWS_REGION`.
+
+## Elastic Beanstalk CI/CD
+The workflow in `.github/workflows/dashboard-ebs-deploy.yml` deploys the dashboard application to an existing Elastic Beanstalk application and environment.
+
+### Trigger behavior
+- Automatically runs on pushes to `main` when files under `dashboard/` change.
+- Can also be started manually from GitHub Actions using `workflow_dispatch`.
+
+### Required GitHub configuration
+Add these repository secrets:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN` if your AWS account uses temporary credentials
+- `AWS_REGION` if you prefer a secret over a repository variable or workflow input
+
+Add these repository variables:
+- `EBS_APPLICATION_NAME` — Elastic Beanstalk application name
+- `EBS_ENVIRONMENT_NAME` — Elastic Beanstalk environment name
+- `AWS_REGION` — optional repository variable if you do not want to use a secret or manual input
+
+### What the workflow does
+- Packages the contents of `dashboard/` into a deployment zip with the app files at the archive root.
+- Uses `aws elasticbeanstalk create-storage-location` to get the Elastic Beanstalk deployment bucket.
+- Uploads the package, creates an application version, updates the target environment, and waits for the deployment to finish.
+
+### Assumptions
+- The Elastic Beanstalk application and environment already exist.
+- The target environment uses a Python platform compatible with `dashboard/requirements.txt` and `dashboard/Procfile`.

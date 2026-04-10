@@ -1,0 +1,90 @@
+name: Deploy Dashboard to Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - dashboard/**
+      - .github/workflows/dashboard-ebs-deploy.yml
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: Elastic Beanstalk environment name override
+        required: false
+      application_name:
+        description: Elastic Beanstalk application name override
+        required: false
+      region:
+        description: AWS region override
+        required: false
+        default: us-east-1
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-dashboard:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.region || vars.AWS_REGION || secrets.AWS_REGION || 'us-east-1' }}
+      EBS_APPLICATION_NAME: ${{ inputs.application_name || vars.EBS_APPLICATION_NAME }}
+      EBS_ENVIRONMENT_NAME: ${{ inputs.environment_name || vars.EBS_ENVIRONMENT_NAME }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          if [ -z "${EBS_APPLICATION_NAME}" ]; then
+            echo "Missing EBS application name. Set repository variable EBS_APPLICATION_NAME or provide workflow_dispatch input." >&2
+            exit 1
+          fi
+
+          if [ -z "${EBS_ENVIRONMENT_NAME}" ]; then
+            echo "Missing EBS environment name. Set repository variable EBS_ENVIRONMENT_NAME or provide workflow_dispatch input." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package dashboard application
+        run: |
+          cd dashboard
+          zip -r ../dashboard-ebs.zip . \
+            -x "*.env" \
+            -x "*.pyc" \
+            -x "__pycache__/*"
+
+      - name: Create Elastic Beanstalk application version
+        id: version
+        run: |
+          VERSION_LABEL="dashboard-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
+          S3_BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
+          S3_KEY="elasticbeanstalk/dashboard/${VERSION_LABEL}.zip"
+
+          aws s3 cp dashboard-ebs.zip "s3://${S3_BUCKET}/${S3_KEY}"
+
+          aws elasticbeanstalk create-application-version \
+            --application-name "${EBS_APPLICATION_NAME}" \
+            --version-label "${VERSION_LABEL}" \
+            --source-bundle S3Bucket="${S3_BUCKET}",S3Key="${S3_KEY}"
+
+          echo "version_label=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy application version to Elastic Beanstalk
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "${EBS_ENVIRONMENT_NAME}" \
+            --version-label "${{ steps.version.outputs.version_label }}"
+
+      - name: Wait for environment to finish updating
+        run: |
+          aws elasticbeanstalk wait environment-updated \
+            --environment-names "${EBS_ENVIRONMENT_NAME}"
