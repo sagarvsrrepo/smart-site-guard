@@ -65,7 +65,7 @@ jobs:
       - name: Create Elastic Beanstalk application version
         id: version
         run: |
-          VERSION_LABEL="dashboard-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
+          VERSION_LABEL="dashboard-$(date +'%Y%m%d%H%M%S')-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
           S3_BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
           S3_KEY="elasticbeanstalk/dashboard/${VERSION_LABEL}.zip"
 
