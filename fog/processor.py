@@ -104,37 +104,47 @@ def publish_processed(payload, mqtt_connection):
             payload=message,
             qos=mqtt.QoS.AT_LEAST_ONCE,
         )
-        publish_future.result()
-        print("Published processed event to IoT topic:", IOT_PROCESSED_TOPIC, "packet_id=", packet_id)
+
+        def _log_publish_result(future):
+            try:
+                future.result()
+                print("Published processed event to IoT topic:", IOT_PROCESSED_TOPIC, "packet_id=", packet_id)
+            except Exception as exc:
+                print("Publish failed:", str(exc))
+
+        publish_future.add_done_callback(_log_publish_result)
     except Exception as e:
         print("Publish failed:", str(e))
 
 
 def on_raw_message(topic, payload, **kwargs):
-    raw = json.loads(payload.decode())
-    print("Received raw event on topic", topic, "->", raw)
-    sensor_type = raw.get("sensor_type")
-    value = raw.get("value")
+    try:
+        raw = json.loads(payload.decode())
+        print("Received raw event on topic", topic, "->", raw)
+        sensor_type = raw.get("sensor_type")
+        value = raw.get("value")
 
-    severity, message = classify_event(sensor_type, value)
+        severity, message = classify_event(sensor_type, value)
 
-    processed = {
-        "event_id": str(uuid.uuid4()),
-        "site_id": raw.get("site_id"),
-        "zone_id": raw.get("zone_id"),
-        "sensor_id": raw.get("sensor_id"),
-        "sensor_type": sensor_type,
-        "value": value,
-        "unit": raw.get("unit"),
-        "severity": severity,
-        "message": message,
-        "sensor_timestamp": raw.get("timestamp"),
-        "fog_processed_at": now_iso(),
-    }
+        processed = {
+            "event_id": str(uuid.uuid4()),
+            "site_id": raw.get("site_id"),
+            "zone_id": raw.get("zone_id"),
+            "sensor_id": raw.get("sensor_id"),
+            "sensor_type": sensor_type,
+            "value": value,
+            "unit": raw.get("unit"),
+            "severity": severity,
+            "message": message,
+            "sensor_timestamp": raw.get("timestamp"),
+            "fog_processed_at": now_iso(),
+        }
 
-    print("Processed event:", processed)
-    store_processed_event(processed)
-    publish_processed(processed, mqtt_connection)
+        print("Processed event:", processed)
+        store_processed_event(processed)
+        publish_processed(processed, mqtt_connection)
+    except Exception as exc:
+        print("Error processing raw message:", str(exc))
 
 
 def main():

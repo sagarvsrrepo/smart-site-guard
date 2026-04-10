@@ -16,7 +16,7 @@
     </div>
     <div class="header-actions">
       <div class="live-badge"><span class="pulse"></span>Live</div>
-      <button class="refresh-btn" onclick="loadDashboard()">Refresh</button>
+      <button type="button" class="refresh-btn" onclick="loadDashboard({ showOverlay: true })">Refresh</button>
     </div>
   </header>
 
@@ -29,9 +29,9 @@
       <div class="toolbar-group">
         <label>Time Range</label>
         <div class="chip-group">
-          <button class="chip active" data-minutes="5">Last 5 mins</button>
-          <button class="chip" data-minutes="10">Last 10 mins</button>
-          <button class="chip" data-minutes="60">Last 1 hour</button>
+          <button type="button" class="chip active" data-minutes="5">Last 5 mins</button>
+          <button type="button" class="chip" data-minutes="10">Last 10 mins</button>
+          <button type="button" class="chip" data-minutes="60">Last 1 hour</button>
         </div>
       </div>
 
@@ -40,7 +40,7 @@
         <div class="range-controls">
           <input type="datetime-local" id="startTime" />
           <input type="datetime-local" id="endTime" />
-          <button id="applyRangeBtn" class="refresh-btn">Apply</button>
+          <button type="button" id="applyRangeBtn" class="refresh-btn">Apply</button>
         </div>
       </div>
 
@@ -156,6 +156,20 @@
     };
 
     let selectedMinutes = 5;
+    let hasLoadedOnce = false;
+    let isLoading = false;
+    let lastDashboardSnapshot = "";
+
+    function buildSnapshot(data) {
+      return JSON.stringify({
+        summary: data.summary,
+        site_status: data.site_status,
+        sensor_cards: data.sensor_cards,
+        charts: data.charts,
+        recent_alerts: data.recent_alerts,
+        recent_logs: data.recent_logs
+      });
+    }
 
     function formatStatus(status) {
       const banner = document.getElementById("statusBanner");
@@ -306,9 +320,18 @@
       });
     }
 
-    async function loadDashboard() {
+    async function loadDashboard(options = {}) {
       const overlay = document.getElementById("loadingOverlay");
-      overlay.style.display = "flex";
+      const { showOverlay = false } = options;
+
+      if (isLoading) {
+        return;
+      }
+
+      isLoading = true;
+      if (showOverlay) {
+        overlay.style.display = "flex";
+      }
 
       const sensor = document.getElementById("sensorFilter").value;
       const severity = document.getElementById("severityFilter").value;
@@ -331,6 +354,14 @@
         const response = await fetch(url);
         const data = await response.json();
 
+        const snapshot = buildSnapshot(data);
+        if (hasLoadedOnce && snapshot === lastDashboardSnapshot) {
+          document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
+          return;
+        }
+
+        lastDashboardSnapshot = snapshot;
+
         renderSummary(data.summary);
         formatStatus(data.site_status);
         renderSensorCards(data.sensor_cards);
@@ -343,10 +374,14 @@
         renderLineChart("vibration", data.charts.vibration);
 
         document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
+        hasLoadedOnce = true;
       } catch (error) {
         console.error("Error loading dashboard:", error);
       } finally {
-        overlay.style.display = "none";
+        isLoading = false;
+        if (showOverlay) {
+          overlay.style.display = "none";
+        }
       }
     }
 
@@ -361,20 +396,20 @@
         btn.classList.add("active");
         selectedMinutes = btn.dataset.minutes;
         clearCustomRange();
-        loadDashboard();
+        loadDashboard({ showOverlay: false });
       });
     });
 
-    document.getElementById("sensorFilter").addEventListener("change", loadDashboard);
-    document.getElementById("severityFilter").addEventListener("change", loadDashboard);
+    document.getElementById("sensorFilter").addEventListener("change", () => loadDashboard({ showOverlay: false }));
+    document.getElementById("severityFilter").addEventListener("change", () => loadDashboard({ showOverlay: false }));
     document.getElementById("applyRangeBtn").addEventListener("click", () => {
       selectedMinutes = null;
       document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
-      loadDashboard();
+      loadDashboard({ showOverlay: false });
     });
 
-    loadDashboard();
-    setInterval(loadDashboard, 10000);
+    loadDashboard({ showOverlay: false });
+    setInterval(() => loadDashboard({ showOverlay: false }), 2000);
   </script>
 </body>
 </html>
