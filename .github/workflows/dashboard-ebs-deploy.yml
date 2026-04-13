@@ -24,24 +24,51 @@ permissions:
   contents: read
 
 jobs:
-  deploy-dashboard:
+  build:
+    name: Build artifact
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: ${{ inputs.region || vars.AWS_REGION || secrets.AWS_REGION || 'us-east-1' }}
-      EBS_APPLICATION_NAME: ${{ inputs.application_name || vars.EBS_APPLICATION_NAME }}
-      EBS_ENVIRONMENT_NAME: ${{ inputs.environment_name || vars.EBS_ENVIRONMENT_NAME }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Package dashboard as ZIP
+        run: |
+          cd dashboard
+          zip -r ../securevault-ui.zip . \
+            -x "*.env" \
+            -x "*.pyc" \
+            -x "__pycache__/*"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: securevault-ui-zip
+          path: securevault-ui.zip
+
+  deploy:
+    name: Deploy to Elastic Beanstalk
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      eb_url: ${{ steps.get_eb_url.outputs.eb_url }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+    env:
+      AWS_REGION: ${{ inputs.region || vars.AWS_REGION || secrets.AWS_REGION || 'us-east-1' }}
+      APP_NAME: ${{ inputs.application_name || vars.EBS_APPLICATION_NAME }}
+      ENV_NAME: ${{ inputs.environment_name || vars.EBS_ENVIRONMENT_NAME }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: securevault-ui-zip
+
       - name: Validate deployment configuration
         run: |
-          if [ -z "${EBS_APPLICATION_NAME}" ]; then
+          if [ -z "${APP_NAME}" ]; then
             echo "Missing EBS application name. Set repository variable EBS_APPLICATION_NAME or provide workflow_dispatch input." >&2
             exit 1
           fi
 
-          if [ -z "${EBS_ENVIRONMENT_NAME}" ]; then
+          if [ -z "${ENV_NAME}" ]; then
             echo "Missing EBS environment name. Set repository variable EBS_ENVIRONMENT_NAME or provide workflow_dispatch input." >&2
             exit 1
           fi
@@ -54,37 +81,252 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Package dashboard application
+      - name: Get AWS account info
         run: |
-          cd dashboard
-          zip -r ../dashboard-ebs.zip . \
-            -x "*.env" \
-            -x "*.pyc" \
-            -x "__pycache__/*"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "ROLE_ARN=arn:aws:iam::${ACCOUNT_ID}:role/LabRole" >> "$GITHUB_ENV"
 
-      - name: Create Elastic Beanstalk application version
-        id: version
+      - name: Ensure S3 bucket exists
         run: |
-          VERSION_LABEL="dashboard-$(date +'%Y%m%d%H%M%S')-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
-          S3_BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
-          S3_KEY="elasticbeanstalk/dashboard/${VERSION_LABEL}.zip"
+          BUCKET="elasticbeanstalk-${AWS_REGION}-${ACCOUNT_ID}"
+          echo "S3_BUCKET=$BUCKET" >> "$GITHUB_ENV"
 
-          aws s3 cp dashboard-ebs.zip "s3://${S3_BUCKET}/${S3_KEY}"
+          if aws s3api head-bucket --bucket "$BUCKET" --region "$AWS_REGION" 2>/dev/null; then
+            echo "Bucket $BUCKET already exists"
+          else
+            echo "Creating bucket $BUCKET..."
+            if [ "$AWS_REGION" = "us-east-1" ]; then
+              aws s3api create-bucket \
+                --bucket "$BUCKET" \
+                --region us-east-1
+            else
+              aws s3api create-bucket \
+                --bucket "$BUCKET" \
+                --region "$AWS_REGION" \
+                --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            fi
+            echo "Bucket created"
+          fi
 
+          aws s3api put-bucket-ownership-controls \
+            --bucket "$BUCKET" \
+            --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerPreferred}]' \
+            --region "$AWS_REGION"
+
+          aws s3api put-public-access-block \
+            --bucket "$BUCKET" \
+            --public-access-block-configuration BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=true,RestrictPublicBuckets=true \
+            --region "$AWS_REGION"
+
+      - name: Generate version label
+        run: |
+          VERSION="v-$(date +'%Y%m%d%H%M%S')-${GITHUB_SHA::7}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload ZIP to S3
+        run: |
+          aws s3 cp securevault-ui.zip "s3://${S3_BUCKET}/securevault-ui/${VERSION}.zip" --region "$AWS_REGION"
+          echo "ZIP uploaded to S3"
+
+      - name: Check EB application exists
+        run: |
+          RESULT=$(aws elasticbeanstalk describe-applications \
+            --application-names "$APP_NAME" \
+            --region "$AWS_REGION" \
+            --query 'length(Applications)' \
+            --output text)
+          if [ "$RESULT" = "1" ]; then
+            echo "APP_EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "APP_EXISTS=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create EB application (first deploy only)
+        if: env.APP_EXISTS == 'false'
+        run: |
+          aws elasticbeanstalk create-application \
+            --application-name "$APP_NAME" \
+            --description "Dashboard Flask Application" \
+            --region "$AWS_REGION"
+
+      - name: Create application version
+        run: |
           aws elasticbeanstalk create-application-version \
-            --application-name "${EBS_APPLICATION_NAME}" \
-            --version-label "${VERSION_LABEL}" \
-            --source-bundle S3Bucket="${S3_BUCKET}",S3Key="${S3_KEY}"
+            --application-name "$APP_NAME" \
+            --version-label "$VERSION" \
+            --source-bundle S3Bucket="$S3_BUCKET",S3Key="securevault-ui/${VERSION}.zip" \
+            --region "$AWS_REGION"
 
-          echo "version_label=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
+      - name: Check EB environment exists
+        run: |
+          STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name "$APP_NAME" \
+            --environment-names "$ENV_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Environments[0].Status' \
+            --output text)
+          echo "Environment status: $STATUS"
+          if [ "$STATUS" = "None" ] || [ "$STATUS" = "Terminated" ] || [ -z "$STATUS" ]; then
+            echo "ENV_EXISTS=false" >> "$GITHUB_ENV"
+          else
+            echo "ENV_EXISTS=true" >> "$GITHUB_ENV"
+          fi
 
-      - name: Deploy application version to Elastic Beanstalk
+      - name: Create EB environment (first deploy only)
+        if: env.ENV_EXISTS == 'false'
+        run: |
+          STACK=$(aws elasticbeanstalk list-available-solution-stacks \
+            --region "$AWS_REGION" \
+            --query "SolutionStacks[?contains(@, 'Python 3.12') && contains(@, '64bit Amazon Linux 2023')]|[0]" \
+            --output text)
+          echo "Using solution stack: $STACK"
+
+          PROFILE=$(aws iam list-instance-profiles \
+            --query "InstanceProfiles[?contains(InstanceProfileName, 'Lab')].InstanceProfileName|[0]" \
+            --output text)
+          echo "Using instance profile: $PROFILE"
+
+          if [ -z "$STACK" ] || [ "$STACK" = "None" ]; then
+            echo "No compatible Python 3.12 solution stack found in region $AWS_REGION" >&2
+            exit 1
+          fi
+
+          if [ -z "$PROFILE" ] || [ "$PROFILE" = "None" ]; then
+            echo "No suitable IAM instance profile found (expected a profile name containing 'Lab')." >&2
+            exit 1
+          fi
+
+          aws elasticbeanstalk create-environment \
+            --application-name "$APP_NAME" \
+            --environment-name "$ENV_NAME" \
+            --solution-stack-name "$STACK" \
+            --version-label "$VERSION" \
+            --tier Name=WebServer,Type=Standard \
+            --option-settings \
+              Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value="$PROFILE" \
+              Namespace=aws:autoscaling:asg,OptionName=MinSize,Value=1 \
+              Namespace=aws:autoscaling:asg,OptionName=MaxSize,Value=2 \
+              Namespace=aws:elasticbeanstalk:environment,OptionName=EnvironmentType,Value=SingleInstance \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=LAMBDA_API_URL,Value="${{ vars.LAMBDA_API_URL }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=S3_BUCKET,Value="${{ vars.S3_BUCKET }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=DYNAMO_TABLE,Value="${{ vars.DYNAMO_TABLE }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=AWS_REGION,Value="${{ env.AWS_REGION }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=VIRUSTOTAL_API_KEY,Value="${{ secrets.VIRUSTOTAL_API_KEY }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=FLASK_SECRET_KEY,Value="${{ secrets.FLASK_SECRET_KEY }}" \
+            --region "$AWS_REGION"
+
+      - name: Update EB environment (subsequent deploys)
+        if: env.ENV_EXISTS == 'true'
         run: |
           aws elasticbeanstalk update-environment \
-            --environment-name "${EBS_ENVIRONMENT_NAME}" \
-            --version-label "${{ steps.version.outputs.version_label }}"
+            --application-name "$APP_NAME" \
+            --environment-name "$ENV_NAME" \
+            --version-label "$VERSION" \
+            --option-settings \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=LAMBDA_API_URL,Value="${{ vars.LAMBDA_API_URL }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=S3_BUCKET,Value="${{ vars.S3_BUCKET }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=DYNAMO_TABLE,Value="${{ vars.DYNAMO_TABLE }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=AWS_REGION,Value="${{ env.AWS_REGION }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=VIRUSTOTAL_API_KEY,Value="${{ secrets.VIRUSTOTAL_API_KEY }}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=FLASK_SECRET_KEY,Value="${{ secrets.FLASK_SECRET_KEY }}" \
+            --region "$AWS_REGION"
 
-      - name: Wait for environment to finish updating
+      - name: Wait for environment to be Ready
         run: |
-          aws elasticbeanstalk wait environment-updated \
-            --environment-names "${EBS_ENVIRONMENT_NAME}"
+          echo "Waiting for environment to be Ready (up to 15 mins)..."
+          for i in $(seq 1 60); do
+            STATUS=$(aws elasticbeanstalk describe-environments \
+              --application-name "$APP_NAME" \
+              --environment-names "$ENV_NAME" \
+              --region "$AWS_REGION" \
+              --query 'Environments[0].Status' \
+              --output text)
+            HEALTH=$(aws elasticbeanstalk describe-environments \
+              --application-name "$APP_NAME" \
+              --environment-names "$ENV_NAME" \
+              --region "$AWS_REGION" \
+              --query 'Environments[0].Health' \
+              --output text)
+            echo "[$i/60] Status: $STATUS | Health: $HEALTH"
+            if [ "$STATUS" = "Ready" ]; then
+              echo "Environment is Ready"
+              break
+            fi
+            if [ "$STATUS" = "Terminated" ]; then
+              echo "Environment terminated - checking recent EB events"
+              aws elasticbeanstalk describe-events \
+                --application-name "$APP_NAME" \
+                --environment-name "$ENV_NAME" \
+                --max-records 10 \
+                --region "$AWS_REGION" \
+                --query 'Events[*].[EventDate,Severity,Message]' \
+                --output table
+              exit 1
+            fi
+            if [ "$i" = "60" ]; then
+              echo "Timed out after 15 minutes"
+              exit 1
+            fi
+            sleep 15
+          done
+
+      - name: Fetch EB events on failure
+        if: failure()
+        run: |
+          echo "=== Recent EB Events ==="
+          aws elasticbeanstalk describe-events \
+            --application-name "$APP_NAME" \
+            --environment-name "$ENV_NAME" \
+            --max-records 15 \
+            --region "$AWS_REGION" \
+            --query 'Events[*].[EventDate,Severity,Message]' \
+            --output table
+
+      - name: Get EB environment URL
+        id: get_eb_url
+        run: |
+          set -e
+
+          URL=$(aws elasticbeanstalk describe-environments \
+            --application-name "$APP_NAME" \
+            --environment-names "$ENV_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Environments[0].CNAME' \
+            --output text)
+
+          echo "Raw CNAME: $URL"
+
+          if [ -z "$URL" ] || [ "$URL" = "None" ]; then
+            echo "No CNAME returned" >&2
+            exit 1
+          fi
+
+          FULL_URL="http://$URL"
+
+          echo "eb_url=$FULL_URL" >> "$GITHUB_OUTPUT"
+          echo "EB_URL=$FULL_URL" >> "$GITHUB_ENV"
+
+          echo "Final URL: $FULL_URL"
+
+      - name: Smoke test UI
+        continue-on-error: true
+        run: |
+          sleep 15
+
+          TARGET="$EB_URL"
+
+          if [ -z "$TARGET" ] || [ "$TARGET" = "http://" ] || [ "$TARGET" = "http://None" ]; then
+            echo "EB_URL is empty or invalid: '$TARGET'"
+            exit 0
+          fi
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$TARGET")
+
+          echo "HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Smoke test passed"
+          else
+            echo "App may still be warming up"
+          fi
