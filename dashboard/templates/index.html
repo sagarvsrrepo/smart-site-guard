@@ -26,25 +26,31 @@
       <p>Loading dashboard...</p>
     </div>
     <section class="toolbar">
-      <div class="toolbar-group">
-        <label>Time Range</label>
-        <div class="chip-group">
-          <button type="button" class="chip active" data-minutes="5">Last 5 mins</button>
-          <button type="button" class="chip" data-minutes="10">Last 10 mins</button>
-          <button type="button" class="chip" data-minutes="60">Last 1 hour</button>
-        </div>
-      </div>
-
-      <div class="toolbar-group">
-        <label>Custom Range</label>
+      <div class="toolbar-group custom-range-group">
+        <label>Custom Date & Time Range</label>
         <div class="range-controls">
           <input type="datetime-local" id="startTime" />
           <input type="datetime-local" id="endTime" />
           <button type="button" id="applyRangeBtn" class="refresh-btn">Apply</button>
         </div>
+        <div class="range-helper-buttons">
+          <button type="button" class="chip" id="setLast5mBtn">Last 5m</button>
+          <button type="button" class="chip" id="setLast15mBtn">Last 15m</button>
+          <button type="button" class="chip" id="setLastHourBtn">Last 1h</button>
+          <button type="button" class="chip" id="setLast6hBtn">Last 6h</button>
+          <button type="button" class="chip" id="setLast24hBtn">Last 24h</button>
+          <button type="button" class="chip" id="setLast7dBtn">Last 7d</button>
+          <button type="button" class="chip" id="setTodayBtn">Today</button>
+          <button type="button" class="chip" id="clearRangeBtn">Clear</button>
+        </div>
       </div>
 
-      <div class="toolbar-group">
+      <div class="toolbar-group meta range-display-group">
+        <label>Current Selection</label>
+        <div id="rangeDisplay">Last 1m</div>
+      </div>
+
+      <div class="toolbar-group filter-group">
         <label for="sensorFilter">Sensor</label>
         <select id="sensorFilter">
           <option value="ALL">All sensors</option>
@@ -55,7 +61,7 @@
         </select>
       </div>
 
-      <div class="toolbar-group">
+      <div class="toolbar-group filter-group">
         <label for="severityFilter">Severity</label>
         <select id="severityFilter">
           <option value="ALL">All severities</option>
@@ -66,10 +72,6 @@
         </select>
       </div>
 
-      <div class="toolbar-group meta">
-        <label>Last updated</label>
-        <div id="lastUpdated">--</div>
-      </div>
     </section>
 
     <section class="status-banner" id="statusBanner">
@@ -119,7 +121,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Recent Alerts</h2>
-          <p>Filtered safety incidents</p>
+          <p id="alertsMeta">Showing all matching records</p>
         </div>
         <div class="alert-list" id="alertList"></div>
       </div>
@@ -127,7 +129,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Recent Logs</h2>
-          <p>Latest processed records</p>
+          <p id="logsMeta">Showing all matching records</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -148,6 +150,9 @@
 
   <script>
     const chartMap = {};
+    const REFRESH_INTERVAL_MS = 2000;
+    const LIST_REFRESH_INTERVAL_TICKS = 5;
+    const FETCH_TIMEOUT_MS = 4000;
     const chartColors = {
       temperature: "#ef4444",
       gas: "#8b5cf6",
@@ -155,20 +160,23 @@
       vibration: "#14b8a6"
     };
 
-    let selectedMinutes = 5;
-    let hasLoadedOnce = false;
+    let selectedMinutes = 1;
     let isLoading = false;
-    let lastDashboardSnapshot = "";
+    let pollTick = 0;
 
-    function buildSnapshot(data) {
-      return JSON.stringify({
-        summary: data.summary,
-        site_status: data.site_status,
-        sensor_cards: data.sensor_cards,
-        charts: data.charts,
-        recent_alerts: data.recent_alerts,
-        recent_logs: data.recent_logs
-      });
+    function updateRangeDisplay() {
+      const display = document.getElementById("rangeDisplay");
+      const startInput = document.getElementById("startTime").value;
+      const endInput = document.getElementById("endTime").value;
+
+      if (startInput || endInput) {
+        const startLabel = startInput ? new Date(startInput).toLocaleString() : "Start";
+        const endLabel = endInput ? new Date(endInput).toLocaleString() : "Now";
+        display.textContent = `${startLabel} -> ${endLabel}`;
+        return;
+      }
+
+      display.textContent = `Last ${selectedMinutes >= 1440 ? Math.floor(selectedMinutes / 1440) + "d" : selectedMinutes >= 60 ? Math.floor(selectedMinutes / 60) + "h" : selectedMinutes + "m"}`;
     }
 
     function formatStatus(status) {
@@ -219,10 +227,20 @@
       const el = document.getElementById(`${sensorKey}Chart`);
       if (!el) return;
       const ctx = el.getContext("2d");
+      const localizedLabels = (chartData.labels || []).map(label => {
+        const dt = new Date(label);
+        if (!Number.isNaN(dt.getTime())) {
+          const hh = String(dt.getHours()).padStart(2, "0");
+          const mm = String(dt.getMinutes()).padStart(2, "0");
+          const ss = String(Math.floor(dt.getSeconds() / 10) * 10).padStart(2, "0");
+          return `${hh}:${mm}:${ss}`;
+        }
+        return label;
+      });
 
       if (chartMap[sensorKey]) {
         // Update existing chart data
-        chartMap[sensorKey].data.labels = chartData.labels;
+        chartMap[sensorKey].data.labels = localizedLabels;
         chartMap[sensorKey].data.datasets[0].data = chartData.values;
         chartMap[sensorKey].update('none'); // 'none' prevents animation flicker
       } else {
@@ -230,7 +248,7 @@
         chartMap[sensorKey] = new Chart(ctx, {
           type: "line",
           data: {
-            labels: chartData.labels,
+            labels: localizedLabels,
             datasets: [{
               label: `${chartData.label} (${chartData.unit})`,
               data: chartData.values,
@@ -269,13 +287,14 @@
 
     function renderAlerts(alerts) {
       const list = document.getElementById("alertList");
-      list.innerHTML = "";
+      document.getElementById("alertsMeta").textContent = `Showing all matching records (${alerts.length})`;
 
       if (!alerts.length) {
         list.innerHTML = `<div class="empty-state"><i class="fas fa-info-circle"></i> No alerts found for the selected filters.</div>`;
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       alerts.forEach(alert => {
         const item = document.createElement("div");
         item.className = `alert-item ${alert.severity.toLowerCase()}`;
@@ -294,19 +313,22 @@
             <span><i class="fas fa-clock"></i> ${formattedTime}</span>
           </div>
         `;
-        list.appendChild(item);
+        fragment.appendChild(item);
       });
+
+      list.replaceChildren(fragment);
     }
 
     function renderLogs(logs) {
       const tbody = document.getElementById("logsTable");
-      tbody.innerHTML = "";
+      document.getElementById("logsMeta").textContent = `Showing all matching records (${logs.length})`;
 
       if (!logs.length) {
         tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><i class="fas fa-list"></i> No logs found for the selected filters.</div></td></tr>`;
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       logs.forEach(log => {
         const row = document.createElement("tr");
         const formattedTime = new Date(log.fog_processed_at).toLocaleString();
@@ -316,13 +338,15 @@
           <td>${log.value} ${log.unit}</td>
           <td><span class="pill ${log.severity.toLowerCase()}">${log.severity}</span></td>
         `;
-        tbody.appendChild(row);
+        fragment.appendChild(row);
       });
+
+      tbody.replaceChildren(fragment);
     }
 
     async function loadDashboard(options = {}) {
       const overlay = document.getElementById("loadingOverlay");
-      const { showOverlay = false } = options;
+      const { showOverlay = false, forceListRefresh = false } = options;
 
       if (isLoading) {
         return;
@@ -340,6 +364,7 @@
 
       try {
         const params = new URLSearchParams({ sensor, severity });
+
         if (startInput) {
           params.set("start_time", new Date(startInput).toISOString());
         }
@@ -347,34 +372,37 @@
           params.set("end_time", new Date(endInput).toISOString());
         }
         if (!startInput && !endInput) {
-          params.set("minutes", selectedMinutes || 60);
+          params.set("minutes", selectedMinutes || 1);
         }
 
         const url = `/api/dashboard?${params.toString()}`;
-        const response = await fetch(url);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error(`Dashboard API failed with status ${response.status}`);
+        }
         const data = await response.json();
 
-        const snapshot = buildSnapshot(data);
-        if (hasLoadedOnce && snapshot === lastDashboardSnapshot) {
-          document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
-          return;
+        if (!data || !data.summary || !data.charts) {
+          throw new Error("Dashboard API returned incomplete payload");
         }
-
-        lastDashboardSnapshot = snapshot;
 
         renderSummary(data.summary);
         formatStatus(data.site_status);
         renderSensorCards(data.sensor_cards);
-        renderAlerts(data.recent_alerts);
-        renderLogs(data.recent_logs);
+        if (forceListRefresh || pollTick % LIST_REFRESH_INTERVAL_TICKS === 0) {
+          renderAlerts(data.recent_alerts || []);
+          renderLogs(data.recent_logs || []);
+        }
 
         renderLineChart("temperature", data.charts.temperature);
         renderLineChart("gas", data.charts.gas);
         renderLineChart("noise", data.charts.noise);
         renderLineChart("vibration", data.charts.vibration);
-
-        document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
-        hasLoadedOnce = true;
+        updateRangeDisplay();
+        pollTick += 1;
       } catch (error) {
         console.error("Error loading dashboard:", error);
       } finally {
@@ -388,28 +416,61 @@
     function clearCustomRange() {
       document.getElementById("startTime").value = "";
       document.getElementById("endTime").value = "";
+      updateRangeDisplay();
     }
 
-    document.querySelectorAll(".chip").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
-        btn.classList.add("active");
-        selectedMinutes = btn.dataset.minutes;
-        clearCustomRange();
-        loadDashboard({ showOverlay: false });
-      });
-    });
+    function setRangeFromNow(minutesBack) {
+      // Presets should be rolling windows, so clear fixed timestamps.
+      document.getElementById("startTime").value = "";
+      document.getElementById("endTime").value = "";
+      selectedMinutes = minutesBack;
+      updateRangeDisplay();
+      loadDashboard({ showOverlay: false, forceListRefresh: true });
+    }
 
-    document.getElementById("sensorFilter").addEventListener("change", () => loadDashboard({ showOverlay: false }));
-    document.getElementById("severityFilter").addEventListener("change", () => loadDashboard({ showOverlay: false }));
+    function setTodayRange() {
+      const now = new Date();
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      document.getElementById("startTime").value = start.toISOString().slice(0, 16);
+      document.getElementById("endTime").value = now.toISOString().slice(0, 16);
+      selectedMinutes = 1440;
+      updateRangeDisplay();
+      loadDashboard({ showOverlay: false, forceListRefresh: true });
+    }
+
+    document.getElementById("sensorFilter").addEventListener("change", () => loadDashboard({ showOverlay: false, forceListRefresh: true }));
+    document.getElementById("severityFilter").addEventListener("change", () => loadDashboard({ showOverlay: false, forceListRefresh: true }));
     document.getElementById("applyRangeBtn").addEventListener("click", () => {
-      selectedMinutes = null;
-      document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
-      loadDashboard({ showOverlay: false });
+      const startInput = document.getElementById("startTime").value;
+      const endInput = document.getElementById("endTime").value;
+
+      if (startInput && endInput && new Date(startInput) > new Date(endInput)) {
+        alert("Start time must be before end time.");
+        return;
+      }
+
+      selectedMinutes = 1;
+      updateRangeDisplay();
+      loadDashboard({ showOverlay: false, forceListRefresh: true });
     });
 
-    loadDashboard({ showOverlay: false });
-    setInterval(() => loadDashboard({ showOverlay: false }), 2000);
+    document.getElementById("setLast5mBtn").addEventListener("click", () => setRangeFromNow(5));
+    document.getElementById("setLast15mBtn").addEventListener("click", () => setRangeFromNow(15));
+    document.getElementById("setLastHourBtn").addEventListener("click", () => setRangeFromNow(60));
+    document.getElementById("setLast6hBtn").addEventListener("click", () => setRangeFromNow(360));
+    document.getElementById("setLast24hBtn").addEventListener("click", () => setRangeFromNow(1440));
+    document.getElementById("setLast7dBtn").addEventListener("click", () => setRangeFromNow(10080));
+    document.getElementById("setTodayBtn").addEventListener("click", setTodayRange);
+    document.getElementById("clearRangeBtn").addEventListener("click", () => {
+      clearCustomRange();
+      selectedMinutes = 1;
+      loadDashboard({ showOverlay: false, forceListRefresh: true });
+    });
+
+    updateRangeDisplay();
+    loadDashboard({ showOverlay: false, forceListRefresh: true });
+    setInterval(() => loadDashboard({ showOverlay: false }), REFRESH_INTERVAL_MS);
   </script>
 </body>
 </html>

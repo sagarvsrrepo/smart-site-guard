@@ -43,6 +43,14 @@ def parse_iso(value):
         return None
 
 
+def clamp_int(raw_value, minimum, maximum, default):
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
 def get_all_items():
     response = table.scan()
     items = clean(response.get("Items", []))
@@ -97,7 +105,7 @@ def index():
 
 @app.route("/api/dashboard")
 def dashboard_data():
-    minutes = int(request.args.get("minutes", 60))
+    minutes = clamp_int(request.args.get("minutes", 60), 0, 10080, 60)
     severity_filter = request.args.get("severity", "ALL")
     sensor_filter = request.args.get("sensor", "ALL")
 
@@ -117,6 +125,17 @@ def dashboard_data():
     if sensor_filter != "ALL":
         items = [x for x in items if x.get("sensor_type") == sensor_filter]
 
+    if start_time or end_time:
+        chart_points = clamp_int(request.args.get("max_points", 180), 30, 400, 180)
+    elif minutes <= 15:
+        chart_points = 80
+    elif minutes <= 60:
+        chart_points = 140
+    elif minutes <= 24 * 60:
+        chart_points = 220
+    else:
+        chart_points = 320
+
     summary = {
         "total_events": len(items),
         "critical": sum(1 for x in items if x.get("severity") == "CRITICAL"),
@@ -133,14 +152,14 @@ def dashboard_data():
         if sensor in SENSOR_ORDER:
             if sensor not in latest_by_sensor:
                 latest_by_sensor[sensor] = item
-            if len(series[sensor]) < 30:
+            if len(series[sensor]) < chart_points:
                 series[sensor].append(item)
 
     charts = {
         sensor: {
             "label": sensor.capitalize(),
             "unit": SENSOR_UNITS[sensor],
-            "labels": [p.get("fog_processed_at", "")[-8:] for p in list(reversed(series[sensor]))],
+            "labels": [p.get("fog_processed_at", "") for p in list(reversed(series[sensor]))],
             "values": [p.get("value", 0) for p in list(reversed(series[sensor]))],
         }
         for sensor in SENSOR_ORDER
@@ -172,8 +191,11 @@ def dashboard_data():
         site_status=site_status,
         sensor_cards=sensor_cards,
         charts=charts,
-        recent_alerts=items[:10],
-        recent_logs=items[:20],
+        recent_alerts=items,
+        recent_logs=items,
+        limits={
+            "chart_points": chart_points,
+        },
     )
 
 
