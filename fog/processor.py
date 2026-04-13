@@ -8,8 +8,13 @@ from botocore.exceptions import ClientError
 from awscrt import io, mqtt, auth
 from awsiot import mqtt_connection_builder
 from decimal import Decimal
+from dotenv import load_dotenv
+from pathlib import Path
 
 from rules import classify_event
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1").strip()
 TABLE_NAME = os.getenv("DYNAMODB_TABLE", "SmartSiteGuardEvents").strip()

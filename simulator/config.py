@@ -21,12 +21,11 @@ MQTT_TOPIC = os.getenv("MQTT_TOPIC", "smartsite/raw")
 SITE_ID = os.getenv("SITE_ID", "site-dublin-01")
 ZONE_ID = os.getenv("ZONE_ID", "zone-A")
 
-PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", "2"))
+PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", "1"))
 
 SENSOR_IDS = {
     "temperature": "temp-01",
     "gas": "gas-01",
     "noise": "noise-01",
     "vibration": "vib-01",
-    "proximity": "prox-01"
 }

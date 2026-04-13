@@ -47,14 +47,3 @@ def vibration(site_id, zone_id, sensor_id):
         "unit": "mm/s",
         "timestamp": now_iso()
     }
-
-def proximity(site_id, zone_id, sensor_id):
-    return {
-        "sensor_type": "proximity",
-        "sensor_id": sensor_id,
-        "site_id": site_id,
-        "zone_id": zone_id,
-        "value": random.choice([0, 1]),
-        "unit": "flag",
-        "timestamp": now_iso()
-    }

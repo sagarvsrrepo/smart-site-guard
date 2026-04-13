@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 import boto3
 from awscrt import io, mqtt, auth
 from awsiot import mqtt_connection_builder
+from dotenv import load_dotenv
+from pathlib import Path
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1").strip()
 IOT_ENDPOINT = os.getenv("IOT_ENDPOINT", "").strip()
@@ -14,7 +19,7 @@ IOT_TOPIC_RAW = os.getenv("IOT_TOPIC_RAW", "smartsite/raw").strip()
 CLIENT_ID = os.getenv("IOT_CLIENT_ID", f"simulator-{uuid.uuid4()}")
 SITE_ID = os.getenv("SITE_ID", "site-dublin-01").strip()
 ZONE_ID = os.getenv("ZONE_ID", "zone-A").strip()
-PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", "2"))
+PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", "1"))
 
 SENSOR_IDS = {
     "temperature": os.getenv("TEMP_SENSOR_ID", "temp-01"),
@@ -97,19 +102,19 @@ def main():
 
     try:
         while True:
-            sensor_type = random.choice(sensor_types)
-            sensor_id = SENSOR_IDS[sensor_type]
-            event = create_sensor_event(sensor_type, sensor_id)
-            message = json.dumps(event)
+            for sensor_type in sensor_types:
+                sensor_id = SENSOR_IDS[sensor_type]
+                event = create_sensor_event(sensor_type, sensor_id)
+                message = json.dumps(event)
 
-            publish_future, packet_id = mqtt_connection.publish(
-                topic=IOT_TOPIC_RAW,
-                payload=message,
-                qos=mqtt.QoS.AT_LEAST_ONCE,
-            )
-            publish_future.result()
+                publish_future, packet_id = mqtt_connection.publish(
+                    topic=IOT_TOPIC_RAW,
+                    payload=message,
+                    qos=mqtt.QoS.AT_LEAST_ONCE,
+                )
+                publish_future.result()
 
-            print(f"Published raw event to {IOT_TOPIC_RAW}: {event} (packet_id={packet_id})")
+                print(f"Published raw event to {IOT_TOPIC_RAW}: {event} (packet_id={packet_id})")
             time.sleep(PUBLISH_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         print("Disconnecting from AWS IoT Core...")

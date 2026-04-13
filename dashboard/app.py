@@ -105,7 +105,7 @@ def index():
 
 @app.route("/api/dashboard")
 def dashboard_data():
-    minutes = clamp_int(request.args.get("minutes", 60), 0, 10080, 60)
+    minutes = clamp_int(request.args.get("minutes", 5), 0, 10080, 5)
     severity_filter = request.args.get("severity", "ALL")
     sensor_filter = request.args.get("sensor", "ALL")
 

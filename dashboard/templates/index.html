@@ -47,7 +47,7 @@
 
       <div class="toolbar-group meta range-display-group">
         <label>Current Selection</label>
-        <div id="rangeDisplay">Last 1m</div>
+        <div id="rangeDisplay">Last 5m</div>
       </div>
 
       <div class="toolbar-group filter-group">
@@ -150,7 +150,7 @@
 
   <script>
     const chartMap = {};
-    const REFRESH_INTERVAL_MS = 2000;
+    const REFRESH_INTERVAL_MS = 1000;
     const LIST_REFRESH_INTERVAL_TICKS = 5;
     const FETCH_TIMEOUT_MS = 4000;
     const chartColors = {
@@ -160,7 +160,7 @@
       vibration: "#14b8a6"
     };
 
-    let selectedMinutes = 1;
+    let selectedMinutes = 5;
     let isLoading = false;
     let pollTick = 0;
 
@@ -372,7 +372,7 @@
           params.set("end_time", new Date(endInput).toISOString());
         }
         if (!startInput && !endInput) {
-          params.set("minutes", selectedMinutes || 1);
+          params.set("minutes", selectedMinutes || 5);
         }
 
         const url = `/api/dashboard?${params.toString()}`;
@@ -450,7 +450,7 @@
         return;
       }
 
-      selectedMinutes = 1;
+      selectedMinutes = 5;
       updateRangeDisplay();
       loadDashboard({ showOverlay: false, forceListRefresh: true });
     });
@@ -464,7 +464,7 @@
     document.getElementById("setTodayBtn").addEventListener("click", setTodayRange);
     document.getElementById("clearRangeBtn").addEventListener("click", () => {
       clearCustomRange();
-      selectedMinutes = 1;
+      selectedMinutes = 5;
       loadDashboard({ showOverlay: false, forceListRefresh: true });
     });
 
